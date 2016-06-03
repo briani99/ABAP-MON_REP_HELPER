@@ -1,0 +1,529 @@
+*&---------------------------------------------------------------------*
+*& Report  ZBK_SMREP_REPHELPER
+
+*& Troubleshoot Interactive Report issue.
+*& Brian Keenan
+*&---------------------------------------------------------------------*
+
+REPORT  ZBK_SMREP_REPHELPER.
+
+TYPES: tt_guid type STANDARD TABLE OF ac_guid,
+       tt_config type STANDARD TABLE OF aiccmsbiconfig,
+       ltt_contextdir type STANDARD table of accontextdir.
+
+DATA: seltab type table of rsparams,
+      wa_seltab like line of seltab.
+
+TYPES:
+      BEGIN OF ty_mc_match,
+        metric_id  TYPE  AC_GUID,
+        context_id  TYPE  AC_GUID,
+      END OF ty_mc_match.
+
+
+
+DATA: headerline(200) type c,
+      alvheader type TABLE OF c.
+
+DATA: lt_ty_mc_match TYPE TABLE OF ty_mc_match,
+      wa_ty_mc_match TYPE ty_mc_match.
+
+DATA: lt_config type tt_config,
+      tt_ACMEACONSUMERDIR type standard table of ACMEACONSUMERDIR,
+      tt_ACE_DB_EVENT type standard table of ACE_DB_EVENT,
+      tt_MES_DB_AGGREGATE type standard table of MES_DB_AGGREGATE,
+      tt_E2EREP_MAPPING type standard table of E2EREP_MAPPING,
+      tt_E2EREP_MAPP_HIST type standard table of E2EREP_MAPP_HIST,
+
+
+      ls_config like line of lt_config,
+      ls_ACMEACONSUMERDIR like line of tt_ACMEACONSUMERDIR,
+      ls_ACE_DB_EVENT like line of tt_ACE_DB_EVENT,
+      ls_MES_DB_AGGREGATE like line of tt_MES_DB_AGGREGATE,
+      ls_E2EREP_MAPPING like line of tt_E2EREP_MAPPING,
+
+      lt_guids type tt_guid,
+
+      context_id type AC_GUID,
+      type_id type AC_GUID,
+      mea_name type AC_NAME,
+      context_name type AC_NAME,
+
+      gs_metricdir type acmetricdir,
+      gt_contextdir type ltt_contextdir,
+      wa_contextdir like line of gt_contextdir,
+      wa_lt_guids type ac_guid,
+
+      gt_metricdir type standard table of acmetricdir,
+      gt_contextid type actcontextid,
+      gt_v_acentrypoints type standard table of v_acentrypoints,
+      gt_mo_selection like gt_v_acentrypoints,
+
+      isEvent(1) type c,
+      max_recs TYPE i,
+      gd_ucomm type sy-ucomm.
+
+field-symbols <ls_contextdir> like line of gt_contextdir.
+field-symbols <gs_v_acentrypoints> like line of gt_v_acentrypoints.
+
+SELECTION-SCREEN BEGIN OF BLOCK checks WITH FRAME TITLE txt0.
+  parameters:
+  p_dir type c RADIOBUTTON GROUP chck DEFAULT 'X',
+  p_alr type c RADIOBUTTON GROUP chck,
+  p_easy type c RADIOBUTTON GROUP chck,
+  p_bwdq type c RADIOBUTTON GROUP chck,
+  p_mapp type c RADIOBUTTON GROUP chck.
+SELECTION-SCREEN END OF BLOCK checks.
+
+SELECTION-SCREEN BEGIN OF BLOCK context WITH FRAME TITLE txt1.
+
+select-options ep_name for <ls_contextdir>-context_name DEFAULT 'SQ7~ABAP'.
+select-options mo_id   for <ls_contextdir>-context_id.
+select-options mo_name for <ls_contextdir>-context_name.
+
+
+SELECTION-SCREEN END OF BLOCK context.
+
+
+SELECTION-SCREEN BEGIN OF BLOCK metric WITH FRAME TITLE txt2.
+parameters:
+  p_av_a  type c RADIOBUTTON GROUP onof DEFAULT 'X' user-command UPD,   " ABAP system availability       - ABAP_SYSTEM_AVAILABILITY
+  p_av_j  type c RADIOBUTTON GROUP onof,    " JAVA system availability       - JAVA_SYSTEM_AVAILABILITY
+  p_av_h  type c RADIOBUTTON GROUP onof,   " HOST availability              - c
+  p_av_ia type c RADIOBUTTON GROUP onof,   " ABAP INSTANCE availability     - c
+  p_av_ij type c RADIOBUTTON GROUP onof,   " JAVA INSTANCE availability     - JAVA_INSTANCE_AVAILABILITY
+  p_av_d  type c RADIOBUTTON GROUP onof,   " DB availability                - *_DATABASE_AVAILABILITY
+
+
+  p_av_jh type c RADIOBUTTON GROUP onof,   " JAVA_SYSTEM_HTTP_AVAILABILITY
+  p_av_ar type c RADIOBUTTON GROUP onof,   " ABAP_SYSTEM_REMOTE_RFC_AVAILAB
+  p_av_ms type c RADIOBUTTON GROUP onof,   " ABAP_MESSAGE_SERVER_HTTP_AVAIL
+  p_st_ms type c RADIOBUTTON GROUP onof,   " ABAP_MESSAGE_SERVER_STATUS
+
+  p_pf_a  type c RADIOBUTTON GROUP onof,   " ABAP performance               - ABAP_INST_DIALOG_RESPONSE_TIME*
+  p_pf_j  type c RADIOBUTTON GROUP onof,   " JAVA performance               - JAVA_INST_FRONTEND_RESPONSETIM*
+  p_rt_a  type c RADIOBUTTON GROUP onof,   " Dialog Response Time (ABAP)    - DIALOG_RESPONSE_TIME
+  p_ds_a  type c RADIOBUTTON GROUP onof,   " Dialog steps per minute (ABAP) - NUMBER_OF_DIALOG_STEPS_PER_MIN
+  p_uc_a  type c RADIOBUTTON GROUP onof,   " Users Logged In (ABAP)         - ABAP_INST_TOTAL_USERS
+  p_cu_a  type c RADIOBUTTON GROUP onof,   " Concurrent Users (ABAP)        - ABAP_SYS_CONCURRENT_USERS
+  p_cpu   type c RADIOBUTTON GROUP onof,   " CPU utilization                - CPU_UTILIZATION_5MIN
+  p_mem_t type c RADIOBUTTON GROUP onof,   " memory total (kB)              - MEMORY_TOTAL_KB
+  p_mem_f type c RADIOBUTTON GROUP onof,   " memory free  (kB)              - MEMORY_FREE_KB
+  p_pg_in type c RADIOBUTTON GROUP onof,   " page in  (kB)                  - MEMORY_PAGE_IN_KB
+  p_pg_ou type c RADIOBUTTON GROUP onof,   " page out (kB)                  - MEMORY_PAGE_OUT_KB
+  p_fs_p  type c RADIOBUTTON GROUP onof,   " file system free (%)           - FILESYSTEM_FREE_%
+  p_fs_m  type c RADIOBUTTON GROUP onof,  " file system free (kB)          - FILESYSTEM_FREE_MB
+  p_fs_u  type c RADIOBUTTON GROUP onof,  " file system Used          - FILESYSTEM_FREE_USED
+  p_other type c RADIOBUTTON GROUP onof,   " Other Technical name of metrics used in Metric monitor
+  p_tech type AC_NAME.
+
+SELECTION-SCREEN END OF BLOCK metric.
+
+INITIALIZATION.
+txt0 = 'Checks to Perform on Reporting Metric'.
+txt1 = 'Select Managed System'.
+txt2 = 'Select Interactive Report Metric (Note: 1909531: Metrics in Interactive Reporting)'.
+
+START-OF-SELECTION.
+*&---------------------------------------------------------------------*
+*& Get the metricID from the repository
+*&---------------------------------------------------------------------*
+ CASE 'X'.
+    when p_av_a.
+      isEvent = '1'.
+      mea_name = 'ABAP_SYSTEM_AVAILABILITY'.
+      perform find_event_id using mea_name lt_guids.
+    when p_av_j.
+      isEvent = '1'.
+      mea_name = 'JAVA_SYSTEM_AVAILABILITY'.
+      perform find_event_id using mea_name lt_guids.
+    when p_av_h.
+      isEvent = '1'.
+      mea_name = 'HOST_AVAILABILITY'.
+      perform find_event_id using mea_name lt_guids.
+    when p_av_ia.
+      isEvent = '1'.
+      mea_name = 'ABAP_INSTANCE_AVAILABILITY'.
+      perform find_event_id using mea_name lt_guids.
+    when p_av_ij.
+      isEvent = '1'.
+      mea_name = 'JAVA_INSTANCE_AVAILABILITY'.
+      perform find_event_id using mea_name lt_guids.
+    when p_av_d.
+      isEvent = '1'.
+      mea_name = '*_DATABASE_AVAILABILITY'.
+      perform find_event_id using mea_name lt_guids.
+    when p_av_jh.
+      isEvent = '1'.
+      mea_name = 'JAVA_SYSTEM_HTTP_AVAILABILITY'.
+      perform find_event_id using mea_name lt_guids.
+    when p_av_ar.
+      isEvent = '1'.
+      mea_name = 'ABAP_SYSTEM_REMOTE_RFC_AVAILABILITY'.
+      perform find_event_id using mea_name lt_guids.
+    when p_av_ms.
+      isEvent = '1'.
+      mea_name = 'ABAP_MESSAGE_SERVER_HTTP_AVAIL'.
+      perform find_event_id using mea_name lt_guids.
+    when p_st_ms.
+      isEvent = '1'.
+      mea_name = 'ABAP_MESSAGE_SERVER_STATUS'.
+      perform find_event_id using mea_name lt_guids.
+    when p_pf_a.
+      isEvent = '1'.
+      mea_name = 'ABAP_INST_DIALOG_RESPONSE_TIME*'.
+      perform find_event_id using mea_name lt_guids.
+    when p_pf_j.
+      isEvent = '1'.
+      mea_name = 'JAVA_INST_FRONTEND_RESPONSETIM*'.
+      perform find_event_id using mea_name lt_guids.
+    when p_rt_a.
+      isEvent = '1'.
+      mea_name = 'DIALOG_RESPONSE_TIME'.
+      perform find_event_id using mea_name lt_guids.
+    when p_ds_a.
+      isEvent = '1'.
+       mea_name = 'NUMBER_OF_DIALOG_STEPS_PER_MIN'.
+      perform find_event_id using mea_name lt_guids.
+    when p_uc_a.
+      isEvent = '1'.
+      mea_name = 'ABAP_INST_TOTAL_USERS'.
+      perform find_event_id using mea_name lt_guids.
+    when p_cu_a.
+      isEvent = '1'.
+      mea_name = 'ABAP_SYS_CONCURRENT_USERS'.
+      perform find_event_id using mea_name lt_guids.
+    when p_cpu.
+      isEvent = '1'.
+      mea_name = 'CPU_UTILIZATION_5MIN'.
+      perform find_event_id using mea_name lt_guids.
+    when p_mem_t.
+      isEvent = '1'.
+      mea_name = 'MEMORY_TOTAL_KB'.
+      perform find_event_id using mea_name lt_guids.
+    when p_mem_f.
+      isEvent = '1'.
+      mea_name = 'MEMORY_PAGE_IN_KB'.
+      perform find_event_id using mea_name lt_guids.
+    when p_pg_in.
+      isEvent = '1'.
+      mea_name = 'ABAP_SYSTEM_AVAILABILITY'.
+      perform find_event_id using mea_name lt_guids.
+    when p_pg_ou.
+      isEvent = '1'.
+      mea_name = 'MEMORY_PAGE_OUT_KB'.
+      perform find_event_id using mea_name lt_guids.
+    when p_fs_p.
+      isEvent = '1'.
+      mea_name = 'FILESYSTEM_FREE_%'.
+      perform find_event_id using mea_name lt_guids.
+    when p_fs_m.
+      isEvent = '1'.
+      mea_name = 'FILESYSTEM_FREE_MB'.
+      perform find_event_id using mea_name lt_guids.
+    when p_fs_u.
+      isEvent = '1'.
+      mea_name = 'FILESYSTEM_USED_%'.
+      perform find_event_id using mea_name lt_guids.
+    when p_other.
+      isEvent = '1'.
+      mea_name = p_tech.
+      perform find_metric_id using p_tech lt_guids.
+  ENDCASE.
+
+
+*&---------------------------------------------------------------------*
+*& Get the context ID from the selection
+*&---------------------------------------------------------------------*
+
+select * from v_acentrypoints into table gt_mo_selection
+    where entry_point_name in ep_name
+    and context_id         in mo_id
+    and context_name       in mo_name.
+
+  if gt_mo_selection is not initial.
+      select * from accontextdir into table gt_contextdir "#EC CI_GENBUFF
+        for all entries in gt_mo_selection
+        where context_id = gt_mo_selection-context_id.
+  endif.
+
+*&---------------------------------------------------------------------*
+*& NOW Lets try to find the match between the context ID and the metric IDs
+*&---------------------------------------------------------------------*
+
+LOOP AT gt_contextdir INTO wa_contextdir.
+
+    LOOP AT lt_guids INTO wa_lt_guids.
+      SELECT DISTINCT type_id context_id INTO wa_ty_mc_match FROM ACMEACONSUMERDIR
+        WHERE
+        AC_VARIANT = 'A' AND
+        WORKMODE_ID = '' AND
+        CONSUMER = 'MONITORING' AND
+        context_id = wa_contextdir-CONTEXT_ID AND
+        type_id = wa_lt_guids.
+      ENDSELECT.
+      IF sy-subrc = 0.
+      Append wa_ty_mc_match to lt_ty_mc_match.
+          CONCATENATE 'Metric name: ' mea_name ' Context Type: ' wa_contextdir-CONTEXT_TYPE ' Context name: ' wa_contextdir-CONTEXT_NAME INTO headerline.
+          APPEND headerline to alvheader.
+
+      ENDIF.
+    ENDLOOP.
+ENDLOOP.
+
+
+*&---------------------------------------------------------------------*
+*& 2. Check if data is coming from the ALR system
+*&    Look for entries in ACE_DB_EVENT and MES_DB_AGGREGATES.
+*&    WRITE snapshot of the entries.
+*&---------------------------------------------------------------------*
+
+IF p_alr = 'X'.
+
+  If isEvent = '0'.
+    LOOP AT lt_ty_mc_match INTO wa_ty_mc_match.
+      SELECT * from ACE_DB_EVENT into TABLE tt_ACE_DB_EVENT
+      WHERE context_id = wa_ty_mc_match-context_id
+        AND event_type_id = wa_ty_mc_match-metric_id.
+    ENDLOOP.
+    IF tt_ACE_DB_EVENT is not INITIAL.
+          PERFORM DISPLAY_ALV USING 'ACE_DB_EVENT' alvheader tt_ACE_DB_EVENT.
+    ElSE.
+      WRITE: /, '@0A@ The table ACE_DB_EVENT has no entries for: ', /, mea_name, ep_name.
+    ENDIF.
+
+  ELSE.
+
+    LOOP AT lt_ty_mc_match INTO wa_ty_mc_match.
+      SELECT * from MES_DB_AGGREGATE into TABLE tt_MES_DB_AGGREGATE
+      WHERE context_id = wa_ty_mc_match-context_id
+        AND type_id = wa_ty_mc_match-metric_id.
+    ENDLOOP.
+    IF tt_MES_DB_AGGREGATE is not INITIAL.
+          PERFORM DISPLAY_ALV USING 'MES_DB_AGGREGATE' alvheader tt_MES_DB_AGGREGATE.
+    ElSE.
+      WRITE: /, '@0A@ The table MES_DB_AGGREGATE has no entries for: ', /, mea_name, ep_name.
+    ENDIF.
+  ENDIF.
+
+ENDIF.
+
+
+*&---------------------------------------------------------------------*
+*& 3. Check if data is consumed by reporting in the directory
+*&    look for entries in ACMEACONSUMERDIR and check Workmodes.
+*&    WRITE snapshot of the entries.
+*&---------------------------------------------------------------------*
+
+IF p_dir = 'X'.
+
+  LOOP AT lt_ty_mc_match INTO wa_ty_mc_match.
+    SELECT * from ACMEACONSUMERDIR into TABLE tt_ACMEACONSUMERDIR
+    WHERE context_id = wa_ty_mc_match-context_id
+      AND type_id = wa_ty_mc_match-metric_id
+      AND CONSUMER = 'MONITORING'.
+
+  ENDLOOP.
+
+  IF tt_ACMEACONSUMERDIR is not INITIAL.
+    PERFORM DISPLAY_ALV USING 'ACMEACONSUMERDIR' alvheader tt_ACMEACONSUMERDIR.
+  ElSE.
+    WRITE: /, '@0A@ The table ACMEACONSUMERDIR has no entries for:', /, mea_name, ep_name.
+  ENDIF.
+
+ENDIF.
+
+*&---------------------------------------------------------------------*
+*& 4. Check if metric is turned on/off in the easy config
+*&    check table aiccmsbiconfig for an entry.
+*&    WRITE snapshot of the entry.
+*&---------------------------------------------------------------------*
+IF p_easy = 'X'.
+    Format INTENSIFIED ON.
+    WRITE: /, 'Test 3:  Has the metric been disabled for reporting using the easy config report?', /.
+    Format INTENSIFIED OFF.
+
+    select * from aiccmsbiconfig into ls_config
+       where configtype = 'METRIC_CFG_FOR_BW'
+         and sourcesys = 'ALL'
+         and paramtype = 'FLAG'
+         and paramname = 'SWITCH'
+         and paramvalue = 'X'.
+    ENDSELECT.
+
+
+    if sy-subrc <> 0.
+      WRITE: /.
+      write '@08@ Filtering with report SMREP_DPC2BW_EASY_CONFIG is not active, all metrics are written to BW'.
+    else.
+        write 'Filtering with report SMREP_DPC2BW_EASY_CONFIG is active, Not all metrics are written to BW'.
+        select * from aiccmsbiconfig into ls_config
+           where configtype = 'METRIC_CFG_FOR_BW'
+             and sourcesys = 'ALL'
+             and paramtype = 'FLAG'
+             and paramname = 'TYPE_ID'
+             and paramvalue = 'X'
+             and INFO1 = mea_name.
+        ENDSELECT.
+
+
+        if sy-subrc = 0.
+          WRITE: /.
+          write: '@08@ The metric is turned on for reporting with report SMREP_DPC2BW_EASY_CONFIG'.
+
+        else.
+          WRITE: /.
+          write: '@0A@ The metric is disable with report SMREP_DPC2BW_EASY_CONFIG'.
+        endif.
+   ENDIF.
+ ENDIF.
+
+*&---------------------------------------------------------------------*
+*& 5. Check if metric is in the BW data Queue
+*&    check queue table, Use report SMREP_BWDATA_QUEUE_SHOW_RECS.
+*&    WRITE snapshot of the entries.
+*&---------------------------------------------------------------------*
+IF p_bwdq = 'X'.
+    wa_seltab-kind    = 'S'.  "S-Select-options P-Parameters
+    wa_seltab-sign    = 'I'.
+    wa_seltab-option  = 'EQ'.
+
+    LOOP AT lt_ty_mc_match INTO wa_ty_mc_match.
+
+      wa_seltab-selname = 'CTX_ID'.
+      wa_seltab-low = wa_ty_mc_match-context_id.
+      append wa_seltab to seltab.
+
+      wa_seltab-selname = 'TYPE_ID'.
+      wa_seltab-low = wa_ty_mc_match-metric_id.
+      append wa_seltab to seltab.
+
+    ENDLOOP.
+
+   SUBMIT SMREP_BWDATA_QUEUE_SHOW_RECS with selection-table seltab via SELECTION-SCREEN AND RETURN.
+
+
+ENDIF.
+
+*&---------------------------------------------------------------------*
+*& 6. Check if values are in Mapping table.
+*&    Check E2EREP_MAPPING for entry, if exists use HKey and check
+*&    the table E2EREP_MAPHIST to see if there were previous
+*&    WRITE snapshot of the entries.
+*&---------------------------------------------------------------------*
+
+IF p_mapp = 'X'.
+
+  LOOP AT lt_ty_mc_match INTO wa_ty_mc_match.
+    SELECT * from E2EREP_MAPPING into TABLE tt_E2EREP_MAPPING
+    WHERE context_id = wa_ty_mc_match-context_id
+      AND type_id = wa_ty_mc_match-metric_id.
+
+    LOOP AT tt_E2EREP_MAPPING INTO ls_E2EREP_MAPPING.
+      SELECT * from E2EREP_MAPP_HIST into TABLE tt_E2EREP_MAPP_HIST
+      WHERE MTE_HKEY = ls_E2EREP_MAPPING-MTE_HKEY.
+    ENDLOOP.
+  ENDLOOP.
+
+
+
+  IF tt_E2EREP_MAPPING is not INITIAL.
+    PERFORM DISPLAY_ALV USING 'E2EREP_MAPPING' alvheader tt_E2EREP_MAPPING.
+  ElSE.
+    WRITE: /, '@0A@ The table E2EREP_MAPPING has no entries for:', /, mea_name, ep_name.
+  ENDIF.
+
+
+  IF tt_E2EREP_MAPP_HIST is not INITIAL.
+    PERFORM DISPLAY_ALV USING 'E2EREP_MAPHIST' alvheader tt_E2EREP_MAPP_HIST.
+  ElSE.
+    WRITE: /, '@0A@ The table E2EREP_MAPHIST has no entries for:', /, mea_name, ep_name.
+  ENDIF.
+ENDIF.
+
+
+*&---------------------------------------------------------------------*
+*& 6. Additional FORMS needed for processing
+*&---------------------------------------------------------------------*
+
+
+*&---------------------------------------------------------------------*
+*&    Display ALV form
+*&---------------------------------------------------------------------*
+FORM display_alv USING value(tablename) TYPE c
+                       headerdata type Table
+                       outputtable type Table.
+
+  DATA: go_alv      TYPE REF TO   cl_salv_table,
+      go_columns  TYPE REF TO   cl_salv_columns,
+      go_funcs    TYPE REF TO   cl_salv_functions,
+      go_ex       TYPE REF TO   CX_ROOT,
+      obj_header    TYPE REF TO cl_salv_form_layout_grid,
+      sp_obj_header  TYPE REF TO cl_salv_form_layout_grid.
+
+  TRY.
+  cl_salv_table=>factory(
+           IMPORTING
+             r_salv_table   = go_alv
+           CHANGING
+             t_table        = outputtable  ).
+
+        " set column optimized
+        go_columns = go_alv->get_columns( ).
+        go_columns->set_optimize( ).
+        " set functions
+        go_funcs = go_alv->get_functions( ).
+        go_funcs->set_all( ).
+
+              CREATE OBJECT sp_obj_header.
+              obj_header = sp_obj_header->create_grid(
+                                                 row = 1
+                                                 column = 1
+                                                 colspan = 6 ).
+              obj_header->create_label(
+                                row     = 1
+                                column  = 1
+                                text    = tablename ).
+
+              go_alv->set_top_of_list( obj_header ).
+              go_alv->display( ).
+      CATCH cx_salv_msg INTO go_ex.
+        MESSAGE go_ex TYPE 'E'.
+    ENDTRY.
+
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&    Event/Metric helper forms
+*&---------------------------------------------------------------------*
+form find_metric_id using value(iv_name) type char60
+                                et_guid type tt_guid.
+data: lv_name type char60.
+clear et_guid[].
+find '*' in iv_name.
+if sy-subrc = 0.
+  lv_name = iv_name.
+  replace all OCCURRENCES OF '*' in lv_name with '%'.
+    select metric_type_id from acmetricrep into TABLE et_guid where name like lv_name.
+else.
+    select metric_type_id from acmetricrep into TABLE et_guid where name = iv_name.
+endif.
+sort et_guid. delete ADJACENT DUPLICATES FROM et_guid.
+endform.
+
+
+form find_event_id using value(iv_name) type char60
+                               et_guid type tt_guid.
+data: lv_name type char60.
+clear et_guid[].
+find '*' in iv_name.
+if sy-subrc = 0.
+  lv_name = iv_name.
+  replace all OCCURRENCES OF '*' in lv_name with '%'.
+    select event_type_id from aceventrep into TABLE et_guid where name like lv_name.
+else.
+    select event_type_id from aceventrep into TABLE et_guid where name = iv_name.
+endif.
+sort et_guid. delete ADJACENT DUPLICATES FROM et_guid.
+endform.
